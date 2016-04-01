@@ -1,8 +1,12 @@
 # RubyRollingRateLimiter
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/ruby_rolling_rate_limiter`. To experiment with that code, run `bin/console` for an interactive prompt.
+Often Redis is used for rate limiting purposes.
+Usually the rate limit packages available count how many times something happens on a certain second or a certain minute. When the clock ticks to the next minute, rate limit counter is reset back to the zero. 
 
-TODO: Delete this and the text above, and describe your gem
+This might be problematic if you are looking to limit rates where hits per integration time window is very low. 
+If you are looking to limit to the five hits per minute, in one time window you get just one hit and six in another, even though the average over two minutes is 3.5.
+
+This package allows you to implement a correct rolling window of threshold that's backed by ATOMIC storage in Redis meaning you can use this implementation across multiple machines and processes.
 
 ## Installation
 
