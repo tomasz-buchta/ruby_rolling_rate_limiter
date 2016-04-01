@@ -26,7 +26,32 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+To use the rate limiting service use the following example:
+
+```ruby
+require 'ruby_rolling_rate_limiter'
+
+$redis = Redis.new
+#
+# Namespace is to group rate limiters, give it any name you want.
+# 60 = rolling_window in seconds.
+# 25 is the max calls in that window.
+# Optional arguments include min_distance (defaults to one second)
+# and also redis object can be passed.
+#
+rate_limiter = RubyRollingRateLimiter.new("MyAwesomeRateLimiter", 60, 25)
+
+# This is a unique identifier of the rate limit. It can be used to specify a rate limit per user for example. Give it any unique name.
+rate_limiter.set_call_identifier("karl@karlos.com")
+
+if rate_limiter.can_call_proceed?
+  # Process the task
+
+else
+  # Get the error
+  puts rate_limiter.current_error
+end
+```
 
 ## Development
 
