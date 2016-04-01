@@ -44,6 +44,9 @@ rate_limiter = RubyRollingRateLimiter.new("MyAwesomeRateLimiter", 60, 25)
 # This is a unique identifier of the rate limit. It can be used to specify a rate limit per user for example. Give it any unique name.
 rate_limiter.set_call_identifier("karl@karlos.com")
 
+#Default call_size is 1 you can change this by using
+# rate_limiter.can_call_proceed?(call_size)
+#
 if rate_limiter.can_call_proceed?
   # Process the task
 
@@ -53,6 +56,9 @@ else
 end
 ```
 
+Tada!
+
+--Karl.
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
