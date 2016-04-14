@@ -1,7 +1,7 @@
 require "ruby_rolling_rate_limiter/version"
 require "ruby_rolling_rate_limiter/errors"
 require "redis"
-require 'redis-lock'
+require 'redlock'
 require "date"
 
 class RubyRollingRateLimiter
@@ -14,12 +14,13 @@ class RubyRollingRateLimiter
     @max_calls_per_interval = max_calls_per_interval
     @min_distance_between_calls_in_seconds = min_distance_between_calls_in_seconds
     @redis_connection = redis_connection
-    
     #Check to ensure args are good.
     validate_arguments
 
     # Check Redis is there
     check_redis_is_available
+    # Setup the Lock Manager
+    @lock_manager ||= Redlock::Client.new([redis_connection])
 
   end
 
@@ -42,24 +43,40 @@ class RubyRollingRateLimiter
     
     clear_before = now - interval
     # Begin multi redis
-    @redis_connection.lock("#{key}-lock") do |lock|
-      @redis_connection.multi
-      @redis_connection.zremrangebyscore(key, 0, clear_before.to_s)
-      @redis_connection.zrange(key, 0, -1)
-      cur = @redis_connection.exec
+    max_retry_counter = 0
+    begin
+      if max_retry_counter <= 100
+        @lock_manager.lock("#{key}-lock", 10000) do |locked|
+          if locked
+            @redis_connection.multi
+            @redis_connection.zremrangebyscore(key, 0, clear_before.to_s)
+            @redis_connection.zrange(key, 0, -1)
+            cur = @redis_connection.exec
 
-      if (cur[1].count <= @max_calls_per_interval) && ((cur[1].count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - cur[1].last.to_i) > (@min_distance_between_calls_in_seconds * 1000 * 1000))
-        @redis_connection.multi
-        @redis_connection.zrange(key, 0, -1)
-        call_size.times do 
-          @redis_connection.zadd(key, now.to_s, now.to_s)
+            if (cur[1].count <= @max_calls_per_interval) && ((cur[1].count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - cur[1].last.to_i) > (@min_distance_between_calls_in_seconds * 1000 * 1000))
+              @redis_connection.multi
+              @redis_connection.zrange(key, 0, -1)
+              call_size.times do 
+                @redis_connection.zadd(key, now.to_s, now.to_s)
+              end
+              @redis_connection.expire(key, @interval_in_seconds)
+              results = @redis_connection.exec
+            else
+              results = [cur[1]]
+            end
+          else
+            raise Errors::LockWaiting, "Could not aquire lock"
+          end
         end
-        @redis_connection.expire(key, @interval_in_seconds)
-        results = @redis_connection.exec
       else
-        results = [cur[1]]
+        raise Errors::MaxRetryReachedOnLockAcquire, "Unable to acquire lock for rate limit after 100 attempts"
       end
+    rescue Errors::LockWaiting
+      sleep 0.2
+      max_retry_counter +=1 
+      retry
     end
+
     if results
       call_set = results[0]
       too_many_in_interval = call_set.count >= @max_calls_per_interval
