@@ -48,21 +48,20 @@ class RubyRollingRateLimiter
       if max_retry_counter <= 100
         @lock_manager.lock("#{key}-lock", 10000) do |locked|
           if locked
-            @redis_connection.multi
+            # Because the resource is locked via redlock, I'm going to remove the multi on this.
             @redis_connection.zremrangebyscore(key, 0, clear_before.to_s)
-            @redis_connection.zrange(key, 0, -1)
-            cur = @redis_connection.exec
-
-            if (cur[1].count <= @max_calls_per_interval) && ((cur[1].count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - cur[1].last.to_i) > (@min_distance_between_calls_in_seconds * 1000 * 1000))
-              @redis_connection.multi
-              @redis_connection.zrange(key, 0, -1)
-              call_size.times do 
+            current_range = @redis_connection.zrange(key, 0, -1)
+            if (current_range.count <= @max_calls_per_interval) && ((current_range.count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - current_range.last.to_i) > (@min_distance_between_calls_in_seconds * 1000 * 1000))
+              results = @redis_connection.zrange(key, 0, -1)
+              call_size.times do
                 @redis_connection.zadd(key, now.to_s, now.to_s)
+                # This will allow us to make spacing between the weights.
+                now = DateTime.now.strftime('%s%6N').to_i # Time since EPOC in microseconds.
               end
               @redis_connection.expire(key, @interval_in_seconds)
-              results = @redis_connection.exec
+
             else
-              results = [cur[1]]
+              results = current_range
             end
           else
             raise Errors::LockWaiting, "Could not aquire lock"
@@ -78,7 +77,7 @@ class RubyRollingRateLimiter
     end
 
     if results
-      call_set = results[0]
+      call_set = results
       too_many_in_interval = call_set.count >= @max_calls_per_interval
       time_since_last_request = (@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - call_set.last.to_i)
 
