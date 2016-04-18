@@ -8,11 +8,11 @@ class RubyRollingRateLimiter
   # Your code goes here...
   attr_reader :current_error
 
-  def initialize(limiter_identifier, interval_in_seconds, max_calls_per_interval, min_distance_between_calls_in_seconds = 1, redis_connection = $redis)
+  def initialize(limiter_identifier, interval_in_seconds, max_calls_per_interval, min_distance_between_calls_in_milliseconds = 1000, redis_connection = $redis)
     @limiter_identifier = limiter_identifier
     @interval_in_seconds = interval_in_seconds
     @max_calls_per_interval = max_calls_per_interval
-    @min_distance_between_calls_in_seconds = min_distance_between_calls_in_seconds
+    @min_distance_between_calls_in_milliseconds = min_distance_between_calls_in_milliseconds
     @redis_connection = redis_connection
     #Check to ensure args are good.
     validate_arguments
@@ -51,7 +51,7 @@ class RubyRollingRateLimiter
             # Because the resource is locked via redlock, I'm going to remove the multi on this.
             @redis_connection.zremrangebyscore(key, 0, clear_before.to_s)
             current_range = @redis_connection.zrange(key, 0, -1)
-            if (current_range.count <= @max_calls_per_interval) && ((current_range.count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - current_range.last.to_i) > (@min_distance_between_calls_in_seconds * 1000 * 1000))
+            if (current_range.count <= @max_calls_per_interval) && ((current_range.count+call_size) <= @max_calls_per_interval) && ((@min_distance_between_calls_in_milliseconds * 1000) && (now - current_range.last.to_i) > (@min_distance_between_calls_in_milliseconds * 1000))
               results = @redis_connection.zrange(key, 0, -1)
               call_size.times do
                 @redis_connection.zadd(key, now.to_s, now.to_s)
@@ -79,7 +79,7 @@ class RubyRollingRateLimiter
     if results
       call_set = results
       too_many_in_interval = call_set.count >= @max_calls_per_interval
-      time_since_last_request = (@min_distance_between_calls_in_seconds * 1000 * 1000) && (now - call_set.last.to_i)
+      time_since_last_request = (@min_distance_between_calls_in_milliseconds * 1000) && (now - call_set.last.to_i)
 
       if too_many_in_interval
         @current_error = {code: 1, result: false, error: "Too many requests", retry_in: (call_set.first.to_i - now + interval) / 1000 / 1000, retry_in_micro: (call_set.first.to_i - now + interval)}
@@ -87,8 +87,8 @@ class RubyRollingRateLimiter
       elsif (call_set.count+call_size) > @max_calls_per_interval
         @current_error = {code: 2, result: false, error: "Call Size too big for available access, trying to make #{call_size} with only #{call_set.count} calls available in window", retry_in: (call_set.first.to_i - now + interval) / 1000 / 1000, retry_in_micro: (call_set.first.to_i - now + interval)}
         return false
-      elsif time_since_last_request < (@min_distance_between_calls_in_seconds * 1000 * 1000)
-        @current_error = {code: 3, result: false, error: "Attempting to thrash faster than the minimal distance between calls", retry_in: @min_distance_between_calls_in_seconds, retry_in_micro: (@min_distance_between_calls_in_seconds * 1000 * 1000)}
+      elsif time_since_last_request < (@min_distance_between_calls_in_milliseconds * 1000)
+        @current_error = {code: 3, result: false, error: "Attempting to thrash faster than the minimal distance between calls", retry_in: @min_distance_between_calls_in_milliseconds / 1000, retry_in_micro: (@min_distance_between_calls_in_milliseconds * 1000)}
         return false
       end
       return true
@@ -101,7 +101,7 @@ class RubyRollingRateLimiter
     raise Errors::ArgumentInvalid, "limiter_identifier argument must be 1 or more characters long" unless @limiter_identifier.length > 0
     raise Errors::ArgumentInvalid, "interval_in_seconds argument must be an integer, this is specified in seconds" unless @interval_in_seconds.is_a? Integer and @interval_in_seconds > 0
     raise Errors::ArgumentInvalid, "max_calls_per_interval argument must be an integer, this is the amount of calls that can be made during the rolling window." unless @max_calls_per_interval.is_a? Integer and @max_calls_per_interval > 0
-    raise Errors::ArgumentInvalid, "min_distance_between_calls_in_seconds argument must be an integer, this is the buffer between each call during the rolling window" unless @min_distance_between_calls_in_seconds.is_a? Integer and @min_distance_between_calls_in_seconds > 0
+    raise Errors::ArgumentInvalid, "min_distance_between_calls_in_milliseconds argument must be an integer, this is the buffer between each call during the rolling window" unless (@min_distance_between_calls_in_milliseconds.is_a? Integer or @min_distance_between_calls_in_milliseconds.is_a? Float)and @min_distance_between_calls_in_milliseconds > 0
   end
 
   #
